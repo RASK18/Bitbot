@@ -1,4 +1,4 @@
-﻿using Coinbase.Pro;
+using Coinbase.Pro;
 using Coinbase.Pro.Models;
 using System;
 using System.Collections.Generic;
@@ -34,7 +34,11 @@ namespace Bitbot
 
         private static async Task Main()
         {
+            Console.Title = "Bitbot";
+            Console.WriteLine();
+
             AskConfigs();
+
             _fees = await _client.Fees.GetCurrentFeesAsync();
             Console.WriteLine($" Tarifa: {Math.Round(_fees.TakerFeeRate * 100, 2)}%");
 
@@ -66,15 +70,15 @@ namespace Bitbot
                     Console.WriteLine(errorMsg);
                 }
 
-                Sleep(10);
+                TimeSpan difference = end - DateTime.Now;
+                int sleep = end > DateTime.Now ? (int)difference.TotalSeconds : 10;
+                Sleep(sleep);
             }
             // ReSharper disable once FunctionNeverReturns
         }
 
         private static void AskConfigs()
         {
-            Console.WriteLine();
-
             Environment env = UiController<Environment>.AskRadio("Entorno", (int)Environment.Pro);
             Config config = env == Environment.Dev ? ConfigDev : ConfigPro;
             _client = new CoinbaseProClient(config);
@@ -124,7 +128,7 @@ namespace Bitbot
             // Min: 10 Eur or 0.001 Btc
             // Use Taker fees
 
-            const decimal pruebas = 65;
+            const decimal pruebas = 15;
             Console.WriteLine($" Comprando {pruebas} Eur en {_currency}...");
             Order buy = await _client.Orders.PlaceMarketOrderAsync(OrderSide.Buy, _productId, pruebas, AmountType.UseFunds);
             buy = await CheckOrder(buy);

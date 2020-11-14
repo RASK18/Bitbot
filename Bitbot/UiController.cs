@@ -28,15 +28,21 @@ namespace Bitbot
 
         private static void PrintRadio(string label, ref int option)
         {
-            string result = $"\r {label}: ";
+            Console.Write($"\r {label}: ");
 
             foreach (FieldInfo field in GetFields())
             {
-                result += option == GetValue(field) ? ">" : "·";
-                result += $" {field.GetDescription()}  ";
-            }
+                bool isOption = option == GetValue(field);
 
-            Console.Write(result);
+                if (isOption)
+                    Console.ForegroundColor = ConsoleColor.Green;
+
+                Console.Write(isOption ? ">" : "·");
+                Console.Write($" {field.GetDescription()}  ");
+
+                if (isOption)
+                    Console.ForegroundColor = ConsoleColor.White;
+            }
         }
 
         private static bool ReadKey(ref int option)
