@@ -26,36 +26,34 @@ namespace Bitbot
             Passphrase = "**********",
         };
 
-        private static Environment _environmentEnum;
-        private static Interval _intervalEnum;
-        private static Currency _currencyEnum;
-        private static decimal _takerFee;
-
-        private static int _interval;
-        private static string _currency;
         private static string _productId;
+        private static Session _session;
         private static CoinbaseProClient _client;
-        private static decimal _balance;
 
         private static async Task Main()
         {
-            Console.Title = "Bitbot";
-            UiController.PrintLine();
-            _environmentEnum = UiController.AskRadio<Environment>("Entorno", (int)Environment.Pro);
-            _intervalEnum = UiController.AskRadio<Interval>("Intervalo", (int)Interval.T6H);
-            _currencyEnum = UiController.AskRadio<Currency>("Producto", (int)Currency.Xrp);
+            UiController.Start();
+            Environment environment = UiController.AskRadio<Environment>("Entorno", (int)Environment.Pro);
+            Interval interval = UiController.AskRadio<Interval>("Intervalo", (int)Interval.T6H);
+            Currency currency = UiController.AskRadio<Currency>("Producto", (int)Currency.Xrp);
 
-            await SetConfig();
-            await UpdateAccounts();
+            Config config = environment == Environment.Pro ? ConfigPro : ConfigDev;
+            _client = new CoinbaseProClient(config);
+
+            _session = new Session(environment, interval, currency, _client);
+            _productId = $"{_session.Currency}-EUR";
+
+            UiController.PrintSession(_session);
 
             while (true)
             {
                 DateTime start = DateTime.Now;
-                DateTime end = start.AddSeconds(_interval);
+                DateTime end = start.AddSeconds(_session.IntervalSec);
 
+                bool isOk = false;
                 try
                 {
-                    await MakeMoney(start, end);
+                    isOk = await MakeMoney(start, end);
                 }
                 catch (Exception ex)
                 {
@@ -64,79 +62,30 @@ namespace Bitbot
                 }
 
                 TimeSpan difference = end - DateTime.Now;
-                int sleep = end > DateTime.Now ? (int)difference.TotalSeconds : 10;
+                int sleep = end > DateTime.Now && !isOk ? (int)difference.TotalSeconds : 10;
                 Sleep(sleep);
             }
             // ReSharper disable once FunctionNeverReturns
         }
 
-        private static async Task SetConfig()
+        private static async Task<bool> MakeMoney(DateTime start, DateTime end)
         {
-            _interval = _intervalEnum switch
-            {
-                Interval.T1M => 60,
-                Interval.T5M => 300,
-                Interval.T15M => 900,
-                Interval.T1H => 3600,
-                Interval.T6H => 21600,
-                Interval.T1D => 86400,
-                _ => 21600
-            };
+            DateTime previous = start.AddSeconds(_session.IntervalSec * -2);
 
-            _currency = _currencyEnum.GetDescription();
-            _productId = $"{_currency}-EUR";
-
-            Config config = _environmentEnum == Environment.Dev ? ConfigDev : ConfigPro;
-            _client = new CoinbaseProClient(config);
-
-            MakerTakerFees fees = await _client.Fees.GetCurrentFeesAsync();
-            _takerFee = fees.TakerFeeRate;
-        }
-
-        private static async Task UpdateAccounts()
-        {
-            Console.Clear();
-            UiController.PrintLine();
-            Console.WriteLine($" Entorno: {_environmentEnum.GetDescription()}");
-            Console.WriteLine($" Intervalo: {_intervalEnum.GetDescription()}");
-            Console.WriteLine($" Producto: {_currencyEnum.GetDescription()}");
-            Console.WriteLine($" Tarifa: {Math.Round(_takerFee * 100, 1)}%");
-            UiController.PrintLine();
-
-            List<Account> accounts = await _client.Accounts.GetAllAccountsAsync();
-            Account euro = accounts.Single(a => a.Currency == "EUR");
-            Console.WriteLine($" EUR: {euro.Available.Round()} Eur");
-
-            Account crypto = accounts.Single(a => a.Currency == _currency);
-            Ticker ticker = await _client.MarketData.GetTickerAsync(_productId);
-            decimal equivalent = (crypto.Available * ticker.Price).Round();
-            Console.WriteLine($" {_currency}: {equivalent} Eur");
-
-            Console.ForegroundColor = _balance >= 0 ? ConsoleColor.Green : ConsoleColor.Red;
-            Console.WriteLine($" Balance de sesión: {_balance.Round()} Eur");
-            Console.ForegroundColor = ConsoleColor.White;
-
-            UiController.PrintLine();
-        }
-
-        private static async Task MakeMoney(DateTime start, DateTime end)
-        {
-            DateTime previous = start.AddSeconds(_interval * -2);
-
-            List<Candle> candles = await _client.MarketData.GetHistoricRatesAsync(_productId, previous, start, _interval);
+            List<Candle> candles = await _client.MarketData.GetHistoricRatesAsync(_productId, previous, start, _session.IntervalSec);
             Candle previousCandle = candles.Last();
 
             if (previousCandle.Open > previousCandle.Close)
             {
                 Console.WriteLine(" El precio está bajando, esperamos...");
-                return;
+                return false;
             }
 
-            decimal? wantedHigh = previousCandle.Open * (_takerFee * 2) + previousCandle.Open;
+            decimal? wantedHigh = previousCandle.Open * (_session.TakerFee * 2) + previousCandle.Open;
             if (wantedHigh > previousCandle.High)
             {
                 Console.WriteLine(" El precio no está subiendo lo suficiente, esperamos...");
-                return;
+                return false;
             }
 
             // Ej: BTC-EUR
@@ -148,48 +97,43 @@ namespace Bitbot
             // Use Taker fees
 
             const decimal eurTest = 15;
-            Console.WriteLine($" Comprando {_currency}...");
             Order buy = await _client.Orders.PlaceMarketOrderAsync(OrderSide.Buy, _productId, eurTest, AmountType.UseFunds);
             buy = await CheckOrder(buy);
-            _balance -= buy.SpecifiedFunds;
 
-            await UpdateAccounts();
-            Console.WriteLine($" Comprado: {buy.SpecifiedFunds.Round()} - {buy.FillFees.Round()} = {buy.Funds.Round()} Eur");
+            string logBuy = $" Comprado: {buy.SpecifiedFunds.Round()} - {buy.FillFees.Round()} = {buy.Funds.Round()} Eur";
+            await _session.UpdateBalance(-buy.SpecifiedFunds, logBuy);
 
             int count = 1;
             while (end > DateTime.Now)
             {
                 Ticker ticker = await _client.MarketData.GetTickerAsync(_productId);
                 decimal actualPrice = buy.FilledSize * ticker.Bid;
-                decimal actualFees = actualPrice * _takerFee;
+                decimal actualFees = actualPrice * _session.TakerFee;
                 decimal wouldGet = actualPrice - actualFees;
                 Console.WriteLine($" {count}/10 - Obtendría: {actualPrice.Round()} - {actualFees.Round()} = {wouldGet.Round()} Eur");
 
                 if (wouldGet > eurTest)
                 {
-                    Console.WriteLine($" Vendiendo {_currency}...");
                     Order sellOk = await _client.Orders.PlaceMarketOrderAsync(OrderSide.Sell, _productId, buy.FilledSize);
                     sellOk = await CheckOrder(sellOk);
-                    _balance += sellOk.ExecutedValue;
+                    decimal finalOk = sellOk.ExecutedValue - sellOk.FillFees;
 
-                    await UpdateAccounts();
-                    Console.WriteLine($" Vendido: {sellOk.SpecifiedFunds.Round()} - {sellOk.FillFees.Round()} = {sellOk.Funds.Round()} Eur");
-                    return;
+                    string logSellOk = $" Vendido: {sellOk.ExecutedValue.Round()} - {sellOk.FillFees.Round()} = {finalOk.Round()} Eur";
+                    await _session.UpdateBalance(finalOk, logSellOk);
+                    return true;
                 }
 
-                Sleep(_interval / 10);
+                Sleep(_session.IntervalSec / 10);
                 count++;
             }
 
-            Console.WriteLine(" Game Over");
-            Console.WriteLine($" Vendiendo {_currency}...");
             Order sellKo = await _client.Orders.PlaceMarketOrderAsync(OrderSide.Sell, _productId, buy.FilledSize);
             sellKo = await CheckOrder(sellKo);
-            decimal final = sellKo.ExecutedValue - sellKo.FillFees;
-            _balance += final;
+            decimal finalKo = sellKo.ExecutedValue - sellKo.FillFees;
 
-            await UpdateAccounts();
-            Console.WriteLine($" Vendido: {sellKo.ExecutedValue.Round()} - {sellKo.FillFees.Round()} = {final.Round()} Eur");
+            string logSellKo = $" Vendido: {sellKo.ExecutedValue.Round()} - {sellKo.FillFees.Round()} = {finalKo.Round()} Eur";
+            await _session.UpdateBalance(finalKo, logSellKo);
+            return false;
         }
 
         private static async Task<Order> CheckOrder(Order order)

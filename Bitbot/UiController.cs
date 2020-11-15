@@ -7,7 +7,33 @@ namespace Bitbot
 {
     internal static class UiController
     {
-        public static void PrintLine() => Console.WriteLine(new string('-', 60));
+        public static void Start()
+        {
+            Console.Title = "Bitbot";
+            Console.SetWindowSize(80, 40);
+            PrintLine();
+        }
+
+        public static void PrintSession(Session session)
+        {
+            Console.Clear();
+            PrintLine();
+            Console.WriteLine($" Entorno: {session.Environment}");
+            Console.WriteLine($" Intervalo: {session.Interval}");
+            Console.WriteLine($" Producto: {session.Currency}");
+            Console.WriteLine($" Tarifa: {(session.TakerFee * 100).Round()}%");
+            PrintLine();
+            Console.WriteLine($" EUR: {session.EurAvailable} Eur");
+            Console.WriteLine($" {session.Currency}: {session.CryptoAvailable} Eur");
+            Console.ForegroundColor = session.Balance >= 0 ? ConsoleColor.Green : ConsoleColor.Red;
+            Console.WriteLine($" Balance de sesión: {session.Balance.Round()} Eur");
+            Console.ForegroundColor = ConsoleColor.White;
+            PrintLine();
+            foreach (string log in session.Logs)
+                Console.WriteLine(log);
+
+            Console.Beep();
+        }
 
         public static T AskRadio<T>(string label, int init = 0) where T : struct, Enum
         {
@@ -26,6 +52,8 @@ namespace Bitbot
 
             return (T)(object)option;
         }
+
+        private static void PrintLine() => Console.WriteLine(new string('-', 60));
 
         private static void PrintRadio<T>(string label, ref int option) where T : struct, Enum
         {
