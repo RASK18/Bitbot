@@ -10,7 +10,7 @@ namespace Bitbot
         [Description("PRO")] Pro
     }
 
-    internal enum Intervals
+    internal enum Interval
     {
         [Description("1min")] T1M,
         [Description("5min")] T5M,
@@ -20,7 +20,7 @@ namespace Bitbot
         [Description("1d")] T1D
     }
 
-    internal enum Currencies
+    internal enum Currency
     {
         [Description("BTC")] Bitcoin,
         [Description("ETH")] Ether,

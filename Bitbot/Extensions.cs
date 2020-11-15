@@ -8,6 +8,8 @@ namespace Bitbot
 {
     public static class Extensions
     {
+        public static decimal Round(this decimal d) => Math.Round(d, 2);
+
         public static string GetDescription(this Enum e) => e.GetType().GetField(e.ToString()).GetDescription();
 
         public static string GetDescription(this ICustomAttributeProvider f) =>
