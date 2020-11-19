@@ -1,70 +1,87 @@
-﻿using Coinbase.Pro;
-using Coinbase.Pro.Models;
+﻿using Binance.Net;
+using Binance.Net.Enums;
+using Binance.Net.Interfaces;
+using Binance.Net.Objects.Spot.WalletData;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
 
 namespace Bitbot
 {
     internal class Session
     {
-        private readonly CoinbaseProClient _client;
+        private readonly BinanceClient _client;
 
-        public int IntervalSec { get; }
-        public string Interval { get; }
-        public string Environment { get; }
         public string Currency { get; }
+        public string Pair => $"{Currency}EUR";
+        public string Interval { get; set; }
+        public int IntervalMin { get; set; }
         public decimal TakerFee { get; set; }
         public decimal EurAvailable { get; set; }
         public decimal CryptoAvailable { get; set; }
         public decimal Balance { get; set; }
         public IList<string> Logs { get; set; }
 
-        public Session(Environment environment, Interval interval, Currency currency, CoinbaseProClient client)
+        public Session(Currency currency, BinanceClient client)
         {
+            _client = client;
             Logs = new List<string>();
             Currency = currency.GetDescription();
-            Environment = environment.GetDescription();
-            Interval = interval.GetDescription();
-            IntervalSec = interval switch
-            {
-                Bitbot.Interval.T1M => 60,
-                Bitbot.Interval.T5M => 300,
-                Bitbot.Interval.T15M => 900,
-                Bitbot.Interval.T1H => 3600,
-                Bitbot.Interval.T6H => 21600,
-                Bitbot.Interval.T1D => 86400,
-                _ => 21600
-            };
 
-            _client = client;
-            UpdateFee().GetAwaiter().GetResult();
-            UpdateAvailable().GetAwaiter().GetResult();
+            UpdateFee();
+            UpdateAvailable();
         }
 
-        public async Task UpdateFee()
+        public void UpdateFee()
         {
-            MakerTakerFees fees = await _client.Fees.GetCurrentFeesAsync();
-            TakerFee = fees.TakerFeeRate;
+            IEnumerable<BinanceTradeFee> fees = _client.Spot.Market.GetTradeFee(Pair).GetResult();
+            TakerFee = fees.Single().TakerFee;
         }
 
-        public async Task UpdateBalance(decimal change, string log)
+        public void SearchInterval()
+        {
+            Array intervals = typeof(Interval).GetEnumValues();
+            foreach (Interval interval in intervals)
+            {
+                bool isGrowing = CheckKline(interval);
+
+                if (!isGrowing) continue;
+
+                Interval = interval.GetDescription();
+                IntervalMin = (int)interval;
+                break;
+            }
+        }
+
+        public void UpdateBalance(decimal change, string log)
         {
             Logs.Add(log);
             Balance += change;
-            await UpdateAvailable();
+            UpdateAvailable();
             UiController.PrintSession(this);
         }
 
-        private async Task UpdateAvailable()
+        private void UpdateAvailable()
         {
-            List<Account> accounts = await _client.Accounts.GetAllAccountsAsync();
-            Account euro = accounts.Single(a => a.Currency == "EUR");
-            EurAvailable = euro.Available.Round();
+            decimal price = _client.Spot.Market.GetPrice(Currency + "EUR").GetResult().Price;
+            IEnumerable<BinanceUserCoin> coins = _client.General.GetUserCoins().GetResult().ToList();
+            BinanceUserCoin euro = coins.Single(a => a.Coin == "EUR");
+            BinanceUserCoin crypto = coins.Single(a => a.Coin == Currency);
 
-            Account crypto = accounts.Single(a => a.Currency == Currency);
-            Ticker ticker = await _client.MarketData.GetTickerAsync(Currency + "-EUR");
-            CryptoAvailable = (crypto.Available * ticker.Ask).Round();
+            EurAvailable = euro.Free.Round();
+            CryptoAvailable = (crypto.Free * price).Round();
+        }
+
+        private bool CheckKline(Interval interval)
+        {
+            KlineInterval kline = interval.ToBinance();
+            IEnumerable<IBinanceKline> candles = _client.Spot.Market
+                                                             .GetKlines(Pair, kline, null, null, 2)
+                                                             .GetResult();
+            IBinanceKline candle = candles.First();
+            decimal? wantedHigh = candle.Open * TakerFee * 2 + candle.Open;
+
+            return candle.Open <= candle.Close && !(wantedHigh > candle.High);
         }
     }
 }
