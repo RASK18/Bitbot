@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 
 namespace Bitbot
 {
@@ -12,6 +13,25 @@ namespace Bitbot
             Console.Title = "Bitbot";
             Console.SetWindowSize(80, 40);
             PrintLine();
+        }
+
+        public static void BeepMario()
+        {
+            Console.Beep(659, 125);
+            Console.Beep(659, 125);
+            Thread.Sleep(125);
+            Console.Beep(659, 125);
+            Thread.Sleep(167);
+            Console.Beep(523, 125);
+            Console.Beep(659, 125);
+            Thread.Sleep(125);
+            Console.Beep(784, 125);
+        }
+
+        public static void BeepWrong()
+        {
+            Console.Beep(523, 125);
+            Console.Beep(392, 125);
         }
 
         private static void PrintLine() => Console.WriteLine(new string('-', 60));
@@ -30,10 +50,31 @@ namespace Bitbot
             Console.WriteLine($" Balance de sesión: {session.Balance.Round()} Eur");
             Console.ForegroundColor = ConsoleColor.White;
             PrintLine();
+            Console.WriteLine($" Precio deseado: {session.WantedPrice.Round()} Eur");
+            PrintLine();
+
             foreach (string log in session.Logs)
                 Console.WriteLine(log);
+        }
 
-            Console.Beep();
+        public static decimal AskNumber(string label, decimal? def = null)
+        {
+            decimal result = 0;
+
+            while (result == 0)
+            {
+                Console.Write($" {label}: ");
+                string input = Console.ReadLine()?.Replace('.', ',');
+
+                if (input == "") input = def?.ToString();
+                if (input != "0" && decimal.TryParse(input, out result)) continue;
+
+                Console.SetCursorPosition(0, Console.CursorTop - 1);
+                Console.Write("\r" + new string(' ', 60));
+                Console.Write("\r");
+            }
+
+            return result;
         }
 
         public static T AskRadio<T>(string label, int init = 0) where T : struct, Enum

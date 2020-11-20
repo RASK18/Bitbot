@@ -29,6 +29,7 @@ namespace Bitbot
 
     internal enum Interval
     {
+        [Description("1min")] T1M = 1,
         [Description("3min")] T3M = 3,
         [Description("5min")] T5M = 5,
         [Description("15min")] T15M = 15,
@@ -39,7 +40,7 @@ namespace Bitbot
         [Description("6h")] T6H = 360,
         [Description("8h")] T8H = 480,
         [Description("12h")] T12H = 720,
-        [Description("1d")] T1D = 1440,
+        [Description("1d")] T1D = 1440
     }
 
     internal static class ConvertEnum
@@ -48,6 +49,7 @@ namespace Bitbot
             // ReSharper disable once SwitchExpressionHandlesSomeKnownEnumValuesWithExceptionInDefault
             interval switch
             {
+                Interval.T1M => KlineInterval.OneMinute,
                 Interval.T3M => KlineInterval.ThreeMinutes,
                 Interval.T5M => KlineInterval.FiveMinutes,
                 Interval.T15M => KlineInterval.FifteenMinutes,

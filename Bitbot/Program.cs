@@ -26,8 +26,9 @@ namespace Bitbot
         {
             UiController.Start();
             Currency currency = UiController.AskRadio<Currency>("Moneda");
+            decimal profit = UiController.AskNumber("Ganancias (%/d)", 0.75m);
 
-            _session = new Session(currency, Client);
+            _session = new Session(currency, profit, Client);
 
             while (true)
             {
@@ -52,17 +53,18 @@ namespace Bitbot
         // Sell: BTC -> EUR
         private static void MakeMoney()
         {
-            const decimal eurAvailableTest = 15;
-
             BinancePlacedOrder buyPlaced = Client.Spot.Order
-                                                .PlaceOrder(_session.Pair, OrderSide.Buy, OrderType.Market, null, eurAvailableTest)
+                                                .PlaceOrder(_session.Pair, OrderSide.Buy, OrderType.Market, null, _session.EurAvailable)
                                                 .GetResult();
 
             decimal buyFee = GetFee(buyPlaced);
             BinanceOrder buy = WaitOrder(buyPlaced);
 
+            _session.WantedPrice = buy.QuoteQuantity + buy.QuoteQuantity * _session.Profit / 100;
             string logBuy = $" Comprado: {buy.QuoteQuantity.Round()} - {buyFee.Round()} = {buy.QuoteQuantityFilled.Round()} Eur";
-            _session.UpdateBalance(-buy.QuoteQuantity.Round(), logBuy);
+            _session.Logs.Add(logBuy);
+            _session.UpdateAvailable();
+            UiController.PrintSession(_session);
 
             int count = 1;
             bool exit = false;
@@ -71,13 +73,13 @@ namespace Bitbot
                 Sleep(_session.IntervalMin * 6); // 10 veces
 
                 decimal price = Client.Spot.Market.GetPrice(_session.Pair).GetResult().Price;
-                decimal actualPrice = buy.QuantityFilled * price;
+                decimal actualPrice = buy.QuantityFilled * price; // Antes o despues de impuestos?
                 decimal actualFees = actualPrice * _session.TakerFee;
                 decimal wouldGet = actualPrice - actualFees;
 
                 Console.WriteLine($" {count}/10 - Obtendría: {actualPrice.Round()} - {actualFees.Round()} = {wouldGet.Round()} Eur");
 
-                if (wouldGet > buy.QuoteQuantity.Round())
+                if (wouldGet >= _session.WantedPrice)
                     exit = true;
 
                 if (count >= 10) break;
@@ -94,7 +96,10 @@ namespace Bitbot
 
             decimal finalSell = sell.QuoteQuantityFilled - sellFee;
             string logSell = $" Vendido: {sell.QuoteQuantityFilled.Round()} - {sellFee.Round()} = {finalSell.Round()} Eur";
-            _session.UpdateBalance(finalSell, logSell);
+            _session.Logs.Add(logSell);
+
+            decimal balance = finalSell - buy.QuoteQuantity;
+            _session.UpdateBalance(balance);
         }
 
         private static decimal GetFee(BinancePlacedOrder placed)

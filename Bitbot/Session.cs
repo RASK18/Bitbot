@@ -16,15 +16,18 @@ namespace Bitbot
         public string Pair => $"{Currency}EUR";
         public string Interval { get; set; }
         public int IntervalMin { get; set; }
+        public decimal Profit { get; set; }
+        public decimal WantedPrice { get; set; }
         public decimal TakerFee { get; set; }
         public decimal EurAvailable { get; set; }
         public decimal CryptoAvailable { get; set; }
         public decimal Balance { get; set; }
         public IList<string> Logs { get; set; }
 
-        public Session(Currency currency, BinanceClient client)
+        public Session(Currency currency, decimal profit, BinanceClient client)
         {
             _client = client;
+            Profit = profit;
             Logs = new List<string>();
             Currency = currency.GetDescription();
 
@@ -40,36 +43,46 @@ namespace Bitbot
 
         public void SearchInterval()
         {
+            Interval = null;
+            IntervalMin = 0;
+
             Array intervals = typeof(Interval).GetEnumValues();
             foreach (Interval interval in intervals)
             {
-                bool isGrowing = CheckKline(interval);
+                bool isPossible = CheckKline(interval);
 
-                if (!isGrowing) continue;
+                if (!isPossible) continue;
 
                 Interval = interval.GetDescription();
                 IntervalMin = (int)interval;
                 break;
             }
+
+            if (Interval == null && IntervalMin == 0)
+                throw new Exception("Imposible conseguir ganancias hoy, pruebe de nuevo mañana");
         }
 
-        public void UpdateBalance(decimal change, string log)
+        public void UpdateBalance(decimal change)
         {
-            Logs.Add(log);
+            if (change >= 0)
+                UiController.BeepMario();
+            else
+                UiController.BeepWrong();
+
             Balance += change;
             UpdateAvailable();
             UiController.PrintSession(this);
         }
 
-        private void UpdateAvailable()
+        public void UpdateAvailable()
         {
             decimal price = _client.Spot.Market.GetPrice(Currency + "EUR").GetResult().Price;
             IEnumerable<BinanceUserCoin> coins = _client.General.GetUserCoins().GetResult().ToList();
             BinanceUserCoin euro = coins.Single(a => a.Coin == "EUR");
             BinanceUserCoin crypto = coins.Single(a => a.Coin == Currency);
 
-            EurAvailable = euro.Free.Round();
-            CryptoAvailable = (crypto.Free * price).Round();
+            EurAvailable = euro.Free;
+            CryptoAvailable = crypto.Free * price;
         }
 
         private bool CheckKline(Interval interval)
@@ -79,9 +92,16 @@ namespace Bitbot
                                                              .GetKlines(Pair, kline, null, null, 2)
                                                              .GetResult();
             IBinanceKline candle = candles.First();
-            decimal? wantedHigh = candle.Open * TakerFee * 2 + candle.Open;
 
-            return candle.Open <= candle.Close && !(wantedHigh > candle.High);
+            decimal profit = EurAvailable + EurAvailable * Profit / 100;
+
+            decimal crypto = EurAvailable / candle.Open;
+            decimal cryptoBuy = crypto - crypto * TakerFee;
+            decimal cryptoSell = cryptoBuy - cryptoBuy * TakerFee;
+
+            decimal wantedHigh = profit / cryptoSell;
+
+            return candle.Open <= candle.Close && wantedHigh <= candle.High;
         }
     }
 }
