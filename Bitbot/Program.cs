@@ -1,147 +1,120 @@
-using Coinbase.Pro;
-using Coinbase.Pro.Models;
+using Binance.Net;
+using Binance.Net.Enums;
+using Binance.Net.Objects.Spot;
+using Binance.Net.Objects.Spot.SpotData;
+using CryptoExchange.Net.Authentication;
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
-using System.Threading.Tasks;
+
 // ReSharper disable StringLiteralTypo
 
 namespace Bitbot
 {
     internal class Program
     {
-        private static readonly Config ConfigDev = new Config
+        private const string Key = "***********";
+        private const string Secret = "***********";
+        private static readonly BinanceClient Client = new BinanceClient(new BinanceClientOptions
         {
-            ApiKey = "**********",
-            Secret = "**********",
-            Passphrase = "**********",
-            ApiUrl = "https://api-public.sandbox.pro.coinbase.com" // Sandbox
-        };
+            ApiCredentials = new ApiCredentials(Key, Secret)
+        });
 
-        private static readonly Config ConfigPro = new Config
-        {
-            ApiKey = "**********",
-            Secret = "**********",
-            Passphrase = "**********",
-        };
-
-        private static string _productId;
         private static Session _session;
-        private static CoinbaseProClient _client;
 
-        private static async Task Main()
+        private static void Main()
         {
             UiController.Start();
-            Environment environment = UiController.AskRadio<Environment>("Entorno", (int)Environment.Pro);
-            Interval interval = UiController.AskRadio<Interval>("Intervalo", (int)Interval.T6H);
-            Currency currency = UiController.AskRadio<Currency>("Producto", (int)Currency.Xrp);
+            Currency currency = UiController.AskRadio<Currency>("Moneda");
 
-            Config config = environment == Environment.Pro ? ConfigPro : ConfigDev;
-            _client = new CoinbaseProClient(config);
-
-            _session = new Session(environment, interval, currency, _client);
-            _productId = $"{_session.Currency}-EUR";
-
-            UiController.PrintSession(_session);
+            _session = new Session(currency, Client);
 
             while (true)
             {
-                DateTime start = DateTime.Now;
-                DateTime end = start.AddSeconds(_session.IntervalSec);
+                _session.SearchInterval();
+                UiController.PrintSession(_session);
 
-                bool isOk = false;
                 try
                 {
-                    isOk = await MakeMoney(start, end);
+                    MakeMoney();
                 }
                 catch (Exception ex)
                 {
-                    string errorMsg = await ex.GetErrorMessageAsync();
-                    Console.WriteLine(errorMsg);
+                    Console.WriteLine(ex.Message);
+                    Console.ReadKey();
                 }
-
-                TimeSpan difference = end - DateTime.Now;
-                int sleep = end > DateTime.Now && !isOk ? (int)difference.TotalSeconds : 10;
-                Sleep(sleep);
             }
             // ReSharper disable once FunctionNeverReturns
         }
 
-        private static async Task<bool> MakeMoney(DateTime start, DateTime end)
+        // Ej: BTC-EUR
+        // Buy:  EUR -> BTC
+        // Sell: BTC -> EUR
+        private static void MakeMoney()
         {
-            DateTime previous = start.AddSeconds(_session.IntervalSec * -2);
+            const decimal eurAvailableTest = 15;
 
-            List<Candle> candles = await _client.MarketData.GetHistoricRatesAsync(_productId, previous, start, _session.IntervalSec);
-            Candle previousCandle = candles.Last();
+            BinancePlacedOrder buyPlaced = Client.Spot.Order
+                                                .PlaceOrder(_session.Pair, OrderSide.Buy, OrderType.Market, null, eurAvailableTest)
+                                                .GetResult();
 
-            if (previousCandle.Open > previousCandle.Close)
-            {
-                Console.WriteLine(" El precio está bajando, esperamos...");
-                return false;
-            }
+            decimal buyFee = GetFee(buyPlaced);
+            BinanceOrder buy = WaitOrder(buyPlaced);
 
-            decimal? wantedHigh = previousCandle.Open * (_session.TakerFee * 2) + previousCandle.Open;
-            if (wantedHigh > previousCandle.High)
-            {
-                Console.WriteLine(" El precio no está subiendo lo suficiente, esperamos...");
-                return false;
-            }
-
-            // Ej: BTC-EUR
-            // Buy:  EUR -> BTC
-            // Sell: BTC -> EUR
-            // UseSize: BTC
-            // UseFunds: EUR
-            // Min: 10 Eur or 0.001 Btc
-            // Use Taker fees
-
-            const decimal eurTest = 15;
-            Order buy = await _client.Orders.PlaceMarketOrderAsync(OrderSide.Buy, _productId, eurTest, AmountType.UseFunds);
-            buy = await CheckOrder(buy);
-
-            string logBuy = $" Comprado: {buy.SpecifiedFunds.Round()} - {buy.FillFees.Round()} = {buy.Funds.Round()} Eur";
-            await _session.UpdateBalance(-buy.SpecifiedFunds, logBuy);
+            string logBuy = $" Comprado: {buy.QuoteQuantity.Round()} - {buyFee.Round()} = {buy.QuoteQuantityFilled.Round()} Eur";
+            _session.UpdateBalance(-buy.QuoteQuantity.Round(), logBuy);
 
             int count = 1;
-            while (end > DateTime.Now)
+            bool exit = false;
+            while (!exit)
             {
-                Ticker ticker = await _client.MarketData.GetTickerAsync(_productId);
-                decimal actualPrice = buy.FilledSize * ticker.Bid;
+                Sleep(_session.IntervalMin * 6); // 10 veces
+
+                decimal price = Client.Spot.Market.GetPrice(_session.Pair).GetResult().Price;
+                decimal actualPrice = buy.QuantityFilled * price;
                 decimal actualFees = actualPrice * _session.TakerFee;
                 decimal wouldGet = actualPrice - actualFees;
+
                 Console.WriteLine($" {count}/10 - Obtendría: {actualPrice.Round()} - {actualFees.Round()} = {wouldGet.Round()} Eur");
 
-                if (wouldGet > eurTest)
-                {
-                    Order sellOk = await _client.Orders.PlaceMarketOrderAsync(OrderSide.Sell, _productId, buy.FilledSize);
-                    sellOk = await CheckOrder(sellOk);
-                    decimal finalOk = sellOk.ExecutedValue - sellOk.FillFees;
+                if (wouldGet > buy.QuoteQuantity.Round())
+                    exit = true;
 
-                    string logSellOk = $" Vendido: {sellOk.ExecutedValue.Round()} - {sellOk.FillFees.Round()} = {finalOk.Round()} Eur";
-                    await _session.UpdateBalance(finalOk, logSellOk);
-                    return true;
-                }
+                if (count >= 10) break;
 
-                Sleep(_session.IntervalSec / 10);
                 count++;
             }
 
-            Order sellKo = await _client.Orders.PlaceMarketOrderAsync(OrderSide.Sell, _productId, buy.FilledSize);
-            sellKo = await CheckOrder(sellKo);
-            decimal finalKo = sellKo.ExecutedValue - sellKo.FillFees;
+            BinancePlacedOrder sellPlaced = Client.Spot.Order
+                                                 .PlaceOrder(_session.Pair, OrderSide.Sell, OrderType.Market, buy.QuantityFilled)
+                                                 .GetResult();
 
-            string logSellKo = $" Vendido: {sellKo.ExecutedValue.Round()} - {sellKo.FillFees.Round()} = {finalKo.Round()} Eur";
-            await _session.UpdateBalance(finalKo, logSellKo);
-            return false;
+            decimal sellFee = GetFee(buyPlaced);
+            BinanceOrder sell = WaitOrder(sellPlaced);
+
+            decimal finalSell = sell.QuoteQuantityFilled - sellFee;
+            string logSell = $" Vendido: {sell.QuoteQuantityFilled.Round()} - {sellFee.Round()} = {finalSell.Round()} Eur";
+            _session.UpdateBalance(finalSell, logSell);
         }
 
-        private static async Task<Order> CheckOrder(Order order)
+        private static decimal GetFee(BinancePlacedOrder placed)
         {
-            while (order.Status != "done")
+            if (placed.Fills == null)
+                throw new Exception("No hay fills! (Ver Account Trade List)");
+
+            decimal feePrice = Client.Spot.Market.GetPrice("BNBEUR").GetResult().Price;
+            decimal fee = placed.Fills.Sum(f => f.Commission) * feePrice;
+            return fee;
+        }
+
+        private static BinanceOrder WaitOrder(BinancePlacedOrder placedOrder)
+        {
+            BinanceOrder order = Client.Spot.Order.GetOrder(_session.Pair, placedOrder.OrderId, placedOrder.ClientOrderId).GetResult();
+
+            while (order.Status != OrderStatus.Filled)
             {
-                order = await _client.Orders.GetOrderAsync(order.Id);
-                Thread.Sleep(500);
+                Thread.Sleep(1000);
+                order = Client.Spot.Order.GetOrder(_session.Pair, placedOrder.OrderId, placedOrder.ClientOrderId).GetResult();
             }
 
             return order;
@@ -157,6 +130,5 @@ namespace Bitbot
             Console.Write("\r                    ");
             Console.Write("\r");
         }
-
     }
 }

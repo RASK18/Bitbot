@@ -14,14 +14,15 @@ namespace Bitbot
             PrintLine();
         }
 
+        private static void PrintLine() => Console.WriteLine(new string('-', 60));
+
         public static void PrintSession(Session session)
         {
             Console.Clear();
             PrintLine();
-            Console.WriteLine($" Entorno: {session.Environment}");
-            Console.WriteLine($" Intervalo: {session.Interval}");
-            Console.WriteLine($" Producto: {session.Currency}");
+            Console.WriteLine($" Moneda: {session.Currency}");
             Console.WriteLine($" Tarifa: {(session.TakerFee * 100).Round()}%");
+            Console.WriteLine($" Intervalo: {session.Interval}");
             PrintLine();
             Console.WriteLine($" EUR: {session.EurAvailable} Eur");
             Console.WriteLine($" {session.Currency}: {session.CryptoAvailable} Eur");
@@ -52,8 +53,6 @@ namespace Bitbot
 
             return (T)(object)option;
         }
-
-        private static void PrintLine() => Console.WriteLine(new string('-', 60));
 
         private static void PrintRadio<T>(string label, ref int option) where T : struct, Enum
         {

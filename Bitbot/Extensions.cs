@@ -1,7 +1,9 @@
-﻿using System;
+﻿using CryptoExchange.Net.Objects;
+using System;
 using System.ComponentModel;
 using System.Linq;
 using System.Reflection;
+
 // ReSharper disable UnusedMember.Global
 
 namespace Bitbot
@@ -23,5 +25,13 @@ namespace Bitbot
                 .GetFields()
                 .SingleOrDefault(f => f.GetDescription() == s)?
                 .GetValue(null);
+
+        public static T GetResult<T>(this CallResult<T> result)
+        {
+            if (result.Success)
+                return result.Data;
+
+            throw new Exception(result.Error?.Message);
+        }
     }
 }
